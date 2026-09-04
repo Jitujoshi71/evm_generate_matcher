@@ -1,0 +1,235 @@
+name: Qwen Coder
+
+on:
+  workflow_dispatch:
+
+jobs:
+  qwen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      # ---------------------------------------------------------
+      # 1. Check runner
+      # ---------------------------------------------------------
+      - name: Check hardware
+        run: |
+          echo "=========================================="
+          echo "          RUNNER INFORMATION"
+          echo "=========================================="
+          echo
+          echo "CPU:"
+          nproc
+          echo
+          echo "RAM:"
+          free -h
+          echo
+          echo "DISK:"
+          df -h /
+          echo
+
+      # ---------------------------------------------------------
+      # 2. Install dependencies
+      # ---------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            cmake \
+            build-essential \
+            curl \
+            wget
+
+      # ---------------------------------------------------------
+      # 3. Build llama.cpp
+      # ---------------------------------------------------------
+      - name: Build llama.cpp
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+
+          cmake -S llama.cpp \
+            -B llama.cpp/build \
+            -DGGML_NATIVE=ON \
+            -DGGML_OPENMP=ON
+
+          cmake --build llama.cpp/build \
+            --config Release \
+            --target llama-server \
+            -j2
+
+          echo
+          echo "llama-server:"
+          ls -lh llama.cpp/build/bin/llama-server
+
+      # ---------------------------------------------------------
+      # 4. Download Qwen2.5-Coder 7B Q4_K_M
+      # ---------------------------------------------------------
+      - name: Download Qwen Coder
+        run: |
+          mkdir -p models
+
+          wget \
+            --progress=dot:giga \
+            -O models/qwen.gguf \
+            "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf?download=true"
+
+          echo
+          echo "Model:"
+          ls -lh models/qwen.gguf
+
+      # ---------------------------------------------------------
+      # 5. Start Qwen
+      # ---------------------------------------------------------
+      - name: Start Qwen server
+        run: |
+          nohup ./llama.cpp/build/bin/llama-server \
+            -m ./models/qwen.gguf \
+            --host 127.0.0.1 \
+            --port 8080 \
+            -c 2048 \
+            -t 2 \
+            -ngl 0 \
+            --parallel 1 \
+            > qwen.log 2>&1 &
+
+          echo $! > qwen.pid
+
+          echo "Waiting for Qwen..."
+
+          for i in {1..60}; do
+            if curl -sf http://127.0.0.1:8080/health > /dev/null; then
+              echo "Qwen server is READY."
+              break
+            fi
+
+            sleep 2
+          done
+
+          echo
+          echo "===== QWEN LOG ====="
+          tail -100 qwen.log
+
+      # ---------------------------------------------------------
+      # 6. Verify server
+      # ---------------------------------------------------------
+      - name: Verify Qwen
+        run: |
+          echo "Testing Qwen API..."
+
+          curl -s \
+            http://127.0.0.1:8080/health
+
+          echo
+          echo "Qwen server verified."
+
+      # ---------------------------------------------------------
+      # 7. Install Cloudflare Tunnel
+      # ---------------------------------------------------------
+      - name: Install Cloudflare Tunnel
+        run: |
+          curl -L \
+            --fail \
+            -o cloudflared \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+
+          chmod +x cloudflared
+
+          ./cloudflared --version
+
+      # ---------------------------------------------------------
+      # 8. Start temporary public tunnel
+      # ---------------------------------------------------------
+      - name: Start temporary URL
+        run: |
+          nohup ./cloudflared tunnel \
+            --url http://127.0.0.1:8080 \
+            > tunnel.log 2>&1 &
+
+          echo $! > tunnel.pid
+
+          echo
+          echo "Waiting for public URL..."
+
+          URL=""
+
+          for i in {1..60}; do
+            URL=$(grep -oE 'https://[-a-zA-Z0-9]+\.trycloudflare\.com' tunnel.log | head -1 || true)
+
+            if [ -n "$URL" ]; then
+              break
+            fi
+
+            sleep 2
+          done
+
+          echo
+          echo "=========================================="
+          echo "          QWEN CODER IS READY"
+          echo "=========================================="
+          echo
+
+          if [ -n "$URL" ]; then
+            echo "OPEN THIS URL:"
+            echo
+            echo "$URL"
+            echo
+            echo "=========================================="
+            echo "Keep this GitHub Action running."
+            echo "Cancel the workflow when finished."
+            echo "=========================================="
+          else
+            echo "ERROR: Tunnel URL was not detected."
+            echo
+            cat tunnel.log
+            exit 1
+          fi
+
+      # ---------------------------------------------------------
+      # 9. Keep server alive for up to 6 hours
+      # ---------------------------------------------------------
+      - name: Keep Qwen running
+        run: |
+          echo
+          echo "=========================================="
+          echo " Qwen Coder is running for up to 6 hours"
+          echo "=========================================="
+          echo
+
+          for i in {1..360}; do
+
+            if ! curl -sf \
+              http://127.0.0.1:8080/health \
+              > /dev/null; then
+
+              echo "Qwen server stopped."
+              echo
+              tail -100 qwen.log
+              exit 1
+            fi
+
+            echo "[$i/360] Qwen is running..."
+
+            sleep 60
+
+          done
+
+          echo
+          echo "6-hour limit reached."
+
+      # ---------------------------------------------------------
+      # 10. Show logs if job fails
+      # ---------------------------------------------------------
+      - name: Show logs
+        if: always()
+        run: |
+          echo "===== QWEN LOG ====="
+          if [ -f qwen.log ]; then
+            tail -200 qwen.log
+          fi
+
+          echo
+          echo "===== TUNNEL LOG ====="
+          if [ -f tunnel.log ]; then
+            tail -100 tunnel.log
+          fi
