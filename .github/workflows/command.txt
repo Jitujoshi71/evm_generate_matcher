@@ -1,0 +1,30 @@
+apt update && apt upgrade -y
+apt install -y build-essential curl aria2 wget screen git
+apt install -y pkg-config libssl-dev
+apt clean && apt autoremove -y
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+rustc --version
+cargo new evm_generator_matcher
+cd evm_generator_matcher
+rm Cargo.toml
+curl -L https://github.com/Jitujoshi71/btc-db-storage/releases/download/v1.0.0/Cargo.toml >> Cargo.toml
+rm src/main.rs
+curl -L https://github.com/Jitujoshi71/btc-db-storage/releases/download/v1.0.0/main.rs >> src/main.rs
+curl -L https://github.com/Jitujoshi71/bloom/releases/download/v1.0.0/words.txt >> words.txt
+
+screen -S btc
+
+curl -L https://github.com/Jitujoshi71/evm_generate_matcher/releases/download/10_15_bloom/evm_10_15.bloom.00.part > evm_10_15.bloom &&
+curl -L https://github.com/Jitujoshi71/evm_generate_matcher/releases/download/10_15_bloom/evm_10_15.bloom.01.part >> evm_10_15.bloom &&
+curl -L https://github.com/Jitujoshi71/evm_generate_matcher/releases/download/10_15_bloom/evm_10_15.bloom.02.part >> evm_10_15.bloom &&
+curl -L https://github.com/Jitujoshi71/evm_generate_matcher/releases/download/10_15_bloom/evm_10_15.bloom.03.part >> evm_10_15.bloom &&
+curl -L https://github.com/Jitujoshi71/evm_generate_matcher/releases/download/10_15_bloom/evm_10_15.bloom.04.part >> evm_10_15.bloom &&
+curl -L https://github.com/Jitujoshi71/evm_generate_matcher/releases/download/10_15_bloom/evm_10_15.bloom.05.part >> evm_10_15.bloom
+
+
+cargo build --release
+cp target/release/evm_generator_matcher ./scan_app
+rm -rf target/
+
+./scan_app
