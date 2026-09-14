@@ -24,3 +24,6 @@ cargo build --release
 cp target/release/evm_generator_matcher ./scan_app
 rm -rf target/
 ./scan_app
+
+
+
